@@ -309,11 +309,12 @@ SECTION 9 - Bluetooth  (deduplicated - was sections 8 & 10)
 
     bluez
     bluez-utils
-    blueberry         # GUI (ashell bluetooth "more" button)
+    blueberry         # GUI (ashell bluetooth "more" button) - AUR package
 
 Command:
 
-    sudo pacman -S --needed --noconfirm bluez bluez-utils blueberry
+    sudo pacman -S --needed --noconfirm bluez bluez-utils
+    yay -S --needed --noconfirm blueberry     # blueberry is in the AUR
 
 Enable + start service:
 
@@ -387,12 +388,14 @@ are intentionally omitted.
     vulkan-radeon         # RADV Vulkan driver
     vulkan-tools          # provides vulkaninfo
     libva-mesa-driver     # VA-API hardware video decode on the iGPU
-    mesa-vdpau            # VDPAU hardware video decode on the iGPU
 
 Command:
 
     sudo pacman -S --needed --noconfirm \
-        mesa vulkan-radeon vulkan-tools libva-mesa-driver mesa-vdpau
+        mesa vulkan-radeon vulkan-tools libva-mesa-driver
+
+(VDPAU is legacy X11-era video decode and is not packaged/needed here;
+VA-API via libva-mesa-driver is what Wayland apps use.)
 
 (amdgpu firmware ships in linux-firmware, already present from the base
 install. No [multilib]/lib32 packages - 32-bit GPU accel is not needed.)
@@ -800,7 +803,6 @@ OFFICIAL (pacman):
     ttf-jetbrains-mono-nerd
     bluez
     bluez-utils
-    blueberry
     ufw
     greetd
     greetd-tuigreet
@@ -809,7 +811,6 @@ OFFICIAL (pacman):
     vulkan-radeon
     vulkan-tools
     libva-mesa-driver         # AMD iGPU VA-API video decode
-    mesa-vdpau                # AMD iGPU VDPAU video decode
     nvidia-open-dkms
     nvidia-utils
     nvidia-prime              # prime-run (on-demand dGPU offload)
@@ -827,6 +828,7 @@ AUR (yay):
     ashell
     brave-bin
     mullvad-vpn-bin
+    blueberry
     nautilus-admin-gtk4
     nautilus-open-any-terminal
     auto-cpufreq

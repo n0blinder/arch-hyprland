@@ -54,14 +54,14 @@ OFFICIAL_PKGS=(
     vim nano wget openssh
     # fonts
     ttf-nerd-fonts-symbols ttf-jetbrains-mono-nerd
-    # bluetooth
-    bluez bluez-utils blueberry
+    # bluetooth (blueberry is AUR - see AUR_PKGS)
+    bluez bluez-utils
     # firewall
     ufw
     # login manager + tty colours
     greetd greetd-tuigreet kbd
-    # gpu: amd (primary)
-    mesa vulkan-radeon vulkan-tools libva-mesa-driver mesa-vdpau
+    # gpu: amd (primary) - libva-mesa-driver = VA-API hw video decode
+    mesa vulkan-radeon vulkan-tools libva-mesa-driver
     # gpu: nvidia (secondary / offload)
     nvidia-open-dkms nvidia-utils nvidia-prime egl-wayland linux-headers dkms
     # auto-cpufreq dependency
@@ -69,7 +69,7 @@ OFFICIAL_PKGS=(
 )
 
 AUR_PKGS=(
-    ashell brave-bin mullvad-vpn-bin
+    ashell brave-bin mullvad-vpn-bin blueberry
     nautilus-admin-gtk4 nautilus-open-any-terminal
     auto-cpufreq
 )
