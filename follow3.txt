@@ -42,7 +42,8 @@ WHAT CHANGED FROM follow2.txt (summary of fixes)
 - HYBRID GPU (hardware-correct for Ryzen 7840HS/780M + RTX A500 Ampere):
   removed the wrong/unneeded xf86-video-ati + xf86-video-amdgpu; added
   AMD iGPU video decode (libva-mesa-driver); set AMD as the primary
-  render device (AQ_DRM_DEVICES via ~/.config/hypr/gpu.env); enabled NVIDIA
+  render device (auto-selected by Hyprland; AQ_DRM_DEVICES only if the
+  dGPU won't suspend - see Section 14); enabled NVIDIA
   RTD3 runtime power-off (NVreg_DynamicPowerManagement=0x02) so the dGPU
   idles suspended; added nvidia-prime (prime-run) for on-demand offload.
   Dropped lib32-nvidia-utils + libva-nvidia-driver -> [multilib] not
@@ -75,7 +76,6 @@ Repository structure expected
 ├── .bashrc
 ├── .zshrc
 ├── starship.toml
-├── start-hyprland-session   <-- session launcher, goes to /usr/local/bin
 ├── vtrgb                    <-- console COLOR PALETTE, goes to /etc/vtrgb
 ├── vtrgb.service            <-- systemd UNIT, goes to /etc/systemd/system
 └── follow3.txt
@@ -441,6 +441,15 @@ Module options - create /etc/modprobe.d/nvidia.conf with:
     -> NVreg_DynamicPowerManagement=0x02 : RTD3 fine-grained runtime
        power management, lets the idle dGPU (and its VRAM) power OFF.
 
+RTD3 udev rule - REQUIRED to flip power/control to "auto" (nvidia-utils
+does NOT reliably ship this; without it power/control stays "on" and the
+dGPU never suspends). Create /etc/udev/rules.d/80-nvidia-pm.rules:
+
+    ACTION=="add",    SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
+    ACTION=="add",    SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
+    ACTION=="remove", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
+    ACTION=="remove", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"
+
 Early-load the modules so KMS is available at boot. Edit
 /etc/mkinitcpio.conf and set:
 
@@ -468,39 +477,35 @@ SECTION 14 - Hybrid GPU: AMD-primary + dGPU power-off + verify
 GOAL: Hyprland renders on the AMD iGPU by default; the NVIDIA dGPU stays
 suspended until you explicitly offload work to it.
 
-(1) Make the AMD iGPU the PRIMARY render device.
-    Hyprland's aquamarine backend reads AQ_DRM_DEVICES; the FIRST device
-    listed is primary. We point it at the amdgpu card node first.
+(1) AMD as render device - AUTOMATIC, do NOT force it by default.
+    Hyprland auto-selects the GPU driving the internal panel (AMD), so you
+    normally do NOT need to set AQ_DRM_DEVICES at all. Forcing it via a
+    launcher caused Backend::create() failures, so the install script does
+    NOT set it - it only PRINTS the detected amdgpu node.
 
-    The correct node is machine-specific - the install script auto-
-    detects which /dev/dri/cardN is bound to amdgpu. Manual check:
+    ONLY IF the dGPU refuses to suspend after boot (because Hyprland opened
+    it too) pin AMD as the sole render device. Find the node:
 
-        for c in /sys/class/drm/card[0-9]; do
-            printf '%s -> ' "$c"
-            basename "$(readlink -f "$c/device/driver")"
+        for l in /dev/dri/by-path/*-card; do
+            c="$(basename "$(readlink -f "$l")")"
+            echo "$l -> $(basename "$(readlink -f "/sys/class/drm/$c/device/driver")")"
         done
-        # note which cardN shows "amdgpu"
+        # note the by-path line that shows "amdgpu"
 
-    Set it so it is exported BEFORE the compositor starts. The launcher
-    /usr/local/bin/start-hyprland-session sources ~/.config/hypr/gpu.env,
-    so the install script writes the export there (stable by-path names):
+    Then set it system-wide (read by pam_env BEFORE the session starts):
 
-        mkdir -p ~/.config/hypr
-        # example if amdgpu is card1 and nvidia is card0:
-        echo 'export AQ_DRM_DEVICES=/dev/dri/by-path/pci-...-card' \
-            > ~/.config/hypr/gpu.env
+        echo 'AQ_DRM_DEVICES=/dev/dri/by-path/pci-XXXX-card' | sudo tee -a /etc/environment
+        # re-log. If the desktop fails to start, remove that line - the
+        # node was wrong. (prime-run still offloads to the dGPU either way.)
 
-    (The install script writes this using the auto-detected amdgpu node.
-    Using the wrong node can cause a black screen at login, so the script
-    only writes a real node when amdgpu is found; otherwise it writes an
-    empty gpu.env - e.g. in a VM with no amdgpu.)
-
-(2) dGPU power-off is otherwise automatic.
-    nvidia-utils ships udev rules that enable RTD3 runtime PM for Turing+
-    GPUs; combined with NVreg_DynamicPowerManagement=0x02 (Section 13)
-    the idle dGPU suspends on its own. No service needed.
+(2) dGPU power-off.
+    The 80-nvidia-pm.rules udev rule (Section 13) sets power/control=auto,
+    and NVreg_DynamicPowerManagement=0x02 makes it fine-grained, so once
+    the dGPU is idle AND nothing holds it open (see point 1) it suspends
+    on its own. No service needed.
     (nvidia-powerd.service = Dynamic Boost for PERFORMANCE, not battery -
     intentionally NOT enabled.)
+    Verify: power/control should read "auto", runtime_status "suspended".
 
 (3) On-demand dGPU use:
         prime-run <application>
@@ -581,32 +586,18 @@ If you swap the image, update the path in
 
 
 =========================================================
-SECTION 17 - Session launcher script  (/usr/local/bin)
+SECTION 17 - Session launch (NO custom launcher)
 =========================================================
 
-greetd's config.toml launches a command that MUST exist in PATH. We
-standardize on "start-hyprland-session", which starts Hyprland DIRECTLY
-(no uwsm - see Section 3 for why it is not needed here).
+There is NO custom launcher script. greetd/tuigreet launches the distro's
+own Hyprland wayland-session directly (/usr/share/wayland-sessions/
+hyprland.desktop). tuigreet is run with --remember-session, so you pick
+"Hyprland" once and it becomes the default thereafter.
 
-Install the launcher:
-
-    sudo cp start-hyprland-session /usr/local/bin/start-hyprland-session
-    sudo chmod +x /usr/local/bin/start-hyprland-session
-
-Contents of the launcher:
-
-    #!/bin/sh
-    # Source the GPU env (AMD as primary render device) then start Hyprland.
-    [ -r "$HOME/.config/hypr/gpu.env" ] && . "$HOME/.config/hypr/gpu.env"
-    exec Hyprland
-
-    -> gpu.env is written by the install script (Section 14) and exports
-       AQ_DRM_DEVICES so the AMD iGPU is the primary render device.
-
-NAME RECONCILIATION:
-The shipped greetd/config.toml active line must point at this launcher:
-    --cmd /usr/local/bin/start-hyprland-session
-so greetd (Section 18) and this script agree on the name.
+Why no launcher: a wrapper that forced AQ_DRM_DEVICES caused
+Backend::create() failures on real hardware, and the plain session starts
+reliably (Hyprland auto-selects the display GPU = AMD). See Section 14 for
+how the dGPU is suspended and how to pin AMD-primary only if needed.
 
 NOTE: because we launch Hyprland directly (no uwsm), the
 "dbus-update-activation-environment --systemd ..." line in autostart.lua
@@ -633,13 +624,15 @@ Deploy greetd config:
     sudo mkdir -p /etc/greetd
     sudo cp greetd/config.toml /etc/greetd/config.toml
 
-Ensure the config's --cmd matches the launcher from Section 17, i.e.:
+The config uses --remember-session and NO --cmd, so tuigreet lists the
+wayland-sessions and remembers your pick:
 
-    command = "tuigreet --remember --asterisks --width 60 \
+    command = "tuigreet --remember --remember-session --asterisks --width 60 \
       --theme 'border=magenta;text=cyan;prompt=green;time=red;\
-      action=blue;button=yellow;container=black;input=red' \
-      --cmd /usr/local/bin/start-hyprland-session"
+      action=blue;button=yellow;container=black;input=red'"
     user = "greeter"
+
+On first login press F3 if needed, pick "Hyprland"; it is remembered after.
 
 Enable greetd:
 
@@ -734,7 +727,7 @@ SECTION 22 - Reboot into the desktop
 
 Expected boot flow:
 
-    greetd -> tuigreet -> start-hyprland-session -> Hyprland
+    greetd -> tuigreet (pick "Hyprland", remembered) -> Hyprland
         -> autostart.lua brings up:
              hyprpaper (wallpaper)
              hypridle (idle/lock)
@@ -838,14 +831,13 @@ SECTION 24 - Open items / verify before shipping the script
    it takes precedence over hyprland.conf (silently). Confirmed working;
    the config loads on the installed Hyprland.
 3. [multilib] is NOT required (no lib32 packages). Leave it disabled.
-   AQ_DRM_DEVICES: the install script auto-detects the amdgpu card node
-   (stable by-path name) and writes ~/.config/hypr/gpu.env, which the
-   launcher sources. A wrong node can black-screen the login, so the
-   script only writes a real node when amdgpu is found (empty on VMs).
+   AQ_DRM_DEVICES is NOT forced (it crashed the backend when pinned). The
+   install script only prints the detected amdgpu node; add it to
+   /etc/environment manually only if the dGPU won't suspend (Section 14).
 4. Username templating: verify no other shipped config hardcodes "tony".
 5. brave-bin / mullvad-vpn-bin vs source builds - pick per preference.
-6. Launch model: Hyprland is started DIRECTLY by greetd/tuigreet via
-   /usr/local/bin/start-hyprland-session (no uwsm). SUPER+M runs
+6. Launch model: NO custom launcher. greetd/tuigreet (--remember-session)
+   launches the distro hyprland.desktop directly (no uwsm). SUPER+M runs
    "hyprctl dispatch exit" (logout). autostart.lua's
    dbus-update-activation-environment line is REQUIRED for user services.
 

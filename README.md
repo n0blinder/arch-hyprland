@@ -52,16 +52,17 @@ It offers a single reboot at the end.
   - **AMD (primary):** mesa, vulkan-radeon, VA-API video decode.
   - **NVIDIA (secondary):** `nvidia-open` (Ampere), modeset + RTD3 runtime
     power-off so the dGPU idles **suspended**; `prime-run` for on-demand use.
-  - AMD is set as the primary render device (`AQ_DRM_DEVICES`, auto-detected).
-- Sets up the login stack: **greetd + tuigreet**, launching Hyprland directly
-  via `/usr/local/bin/start-hyprland-session`; custom TTY colours via `vtrgb`.
+  - Hyprland auto-selects the AMD iGPU (which drives the internal panel); the
+    dGPU suspends via the RTD3 udev rule. Pin `AQ_DRM_DEVICES` only if needed.
+- Sets up the login stack: **greetd + tuigreet** (`--remember-session`) launching
+  the distro Hyprland session directly; custom TTY colours via `vtrgb`.
 - Enables services: bluetooth, auto-cpufreq (CPU power), ufw (deny incoming),
   hyprpolkitagent (user).
 
 ## Boot flow
 
 ```
-greetd → tuigreet → start-hyprland-session → Hyprland
+greetd → tuigreet (pick "Hyprland", remembered) → Hyprland
     → hyprpaper · hypridle · hyprpolkitagent · ashell · cliphist
 ```
 

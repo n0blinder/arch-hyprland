@@ -1,9 +1,0 @@
-#!/bin/sh
-# Installed to /usr/local/bin/start-hyprland-session
-# Launched by greetd/tuigreet. Sources the GPU env written by install.sh
-# (sets the AMD iGPU as the primary render device via AQ_DRM_DEVICES),
-# then starts Hyprland directly. No uwsm: autostart.lua already imports the
-# environment into systemd/D-Bus and starts the user services.
-
-[ -r "$HOME/.config/hypr/gpu.env" ] && . "$HOME/.config/hypr/gpu.env"
-exec Hyprland

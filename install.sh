@@ -133,10 +133,12 @@ cp "${REPO_DIR}"/wallpaper/* "${HOME}/Pictures/Wallpapers/" 2>/dev/null || \
     echo "  (no image found in ${REPO_DIR}/wallpaper/ - skipping)"
 
 # ---------------------------------------------------------------------------
-# 6. Session launcher + greetd + tty colours
+# 6. greetd + tty colours
 # ---------------------------------------------------------------------------
-log "Installing session launcher, greetd config and vtrgb service"
-sudo install -Dm755 "${REPO_DIR}/start-hyprland-session" /usr/local/bin/start-hyprland-session
+# No custom launcher: greetd/tuigreet launches the distro's own Hyprland
+# wayland-session directly (tuigreet --remember-session picks it up). This
+# avoids a fragile wrapper in the login path.
+log "Installing greetd config and vtrgb service"
 
 # disable any pre-existing display manager (ignore if absent)
 for dm in sddm gdm lightdm lxdm; do
@@ -157,6 +159,15 @@ options nvidia_drm modeset=1 fbdev=1
 options nvidia NVreg_DynamicPowerManagement=0x02
 EOF
 
+# RTD3 udev rules: set power/control=auto so the idle dGPU auto-suspends.
+# (nvidia-utils does not reliably ship these; set them explicitly.)
+sudo tee /etc/udev/rules.d/80-nvidia-pm.rules >/dev/null <<'EOF'
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
+ACTION=="remove", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="remove", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"
+EOF
+
 if ! grep -q 'nvidia_drm' /etc/mkinitcpio.conf; then
     sudo cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
     sudo sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' \
@@ -164,31 +175,29 @@ if ! grep -q 'nvidia_drm' /etc/mkinitcpio.conf; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Hybrid GPU: make the AMD iGPU the primary render device
+# 8. Hybrid GPU: report the AMD render node (do NOT force it)
 # ---------------------------------------------------------------------------
-log "Setting AMD as primary render device (AQ_DRM_DEVICES)"
+# We do NOT set AQ_DRM_DEVICES automatically. Forcing it has caused
+# Backend::create() failures on some setups, and Hyprland auto-selects the
+# display GPU (AMD, which drives the internal panel) correctly on its own.
+# The dGPU is suspended by the RTD3 udev rule + NVreg_DynamicPowerManagement
+# (Section 7). Only if the dGPU refuses to suspend (because Hyprland opened
+# it) do you need to pin AMD as the sole render device - instructions below.
+log "Detecting AMD render node (for optional AMD-primary pinning)"
 amd_link=""
-others=""
 for link in /dev/dri/by-path/*-card; do
     [[ -e "${link}" ]] || continue
     card="$(basename "$(readlink -f "${link}")")"          # e.g. card0
     drv="$(basename "$(readlink -f "/sys/class/drm/${card}/device/driver" 2>/dev/null)")"
-    if [[ "${drv}" == "amdgpu" ]]; then
-        amd_link="${link}"
-    else
-        others="${others:+${others}:}${link}"
-    fi
+    [[ "${drv}" == "amdgpu" ]] && amd_link="${link}"
 done
-mkdir -p "${HOME}/.config/hypr"
-# start-hyprland-session sources ~/.config/hypr/gpu.env before launching Hyprland.
 if [[ -n "${amd_link}" ]]; then
-    # by-path names are stable across boots (card numbering is not).
-    echo "export AQ_DRM_DEVICES=${amd_link}${others:+:${others}}" > "${HOME}/.config/hypr/gpu.env"
-    echo "  AQ_DRM_DEVICES=${amd_link}${others:+:${others}}"
+    echo "  amdgpu node: ${amd_link}"
+    echo "  If the dGPU stays active after boot, force AMD-primary with:"
+    echo "    echo 'AQ_DRM_DEVICES=${amd_link}' | sudo tee -a /etc/environment"
+    echo "    (then re-log). Verify the desktop still starts before relying on it."
 else
-    : > "${HOME}/.config/hypr/gpu.env"
-    echo "  WARNING: amdgpu DRM node not found; wrote an empty ~/.config/hypr/gpu.env." >&2
-    echo "  Set AQ_DRM_DEVICES there manually after checking /sys/class/drm (VMs have no amdgpu)." >&2
+    echo "  No amdgpu node found (normal in a VM)."
 fi
 
 # ---------------------------------------------------------------------------
@@ -228,7 +237,7 @@ cat <<'EOF'
  Setup complete.
 
  After reboot the flow is:
-   greetd -> tuigreet -> start-hyprland-session -> Hyprland
+   greetd -> tuigreet (pick "Hyprland", remembered) -> Hyprland
 
  Post-reboot verification:
    cat /sys/module/nvidia_drm/parameters/modeset   # expect: Y
