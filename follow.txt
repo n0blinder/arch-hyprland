@@ -1,0 +1,56 @@
+Packages
+
+XDG Desktop Portal
+ASHELL Status Bar
+cliphist
+hyprpolkitagent
+hyprpaper
+rofi
+mako
+alacritty
+nautilus
+yay
+nautilus image converter
+nautilus-admin-gtk4
+nautilus-open-any-terminal
+brightnessctl
+wireplumber
+playerctl
+autocpufreq
+eza
+zoside
+zsh
+startship
+fzf
+bat
+swayimg
+greetd
+tuigreet 
+kbd
+bluez
+bluez-utils
+blueberry
+uwf firewall
+git
+mousepad
+mullvad-vpn
+brave
+firefox
+nerdfonts	
+
+Video
+mesa
+vulkan-radeon
+vulkan-summary
+xf86-video-amdgpu
+xf86-video-ati
+nvidia-dkms-open
+linux-headers
+nvidia-utils
+
+config to do
+
+
+
+
+

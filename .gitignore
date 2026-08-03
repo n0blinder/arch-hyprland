@@ -1,0 +1,9 @@
+# Shell histories captured from the real machine (may contain private paths)
+.bash_history
+.zsh_history
+
+# Reverse-shell / port-4444 note — deliberately excluded from the setup
+rev-shell-firewall.txt
+
+# Backups of configs adjusted for this repo
+*.orig

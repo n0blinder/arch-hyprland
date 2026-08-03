@@ -1,0 +1,860 @@
+=========================================================
+Arch Linux Hyprland Automated Installation Plan (v3)
+=========================================================
+
+Purpose:
+Take a clean Arch install that already has EVERYTHING EXCEPT the GUI
+(locale, partitions, swap, timezone, users, passwords, NetworkManager
+are done via archinstall) and bring it up to a fully configured,
+ready-to-go Hyprland desktop: all packages, GPU drivers (AMD + NVIDIA),
+services, dotfiles, and app configs.
+
+Target hardware:
+ThinkPad P16v Gen1 - AMD CPU, AMD Radeon iGPU + RTX (NVIDIA) dGPU (hybrid).
+
+NOTE ON THE ARCHINSTALL BASELINE
+--------------------------------
+The clean install is done WITHOUT the archinstall "hyprland" profile
+and WITHOUT the video-driver profiles. Therefore this guide installs
+EVERYTHING itself and does NOT assume any of the following are already
+present: hyprland, kitty, dolphin, dunst, grim, slurp, wofi,
+xdg-desktop-portal-hyprland, polkit-kde-agent, qt5/qt6-wayland,
+mesa, vulkan-radeon, xf86-video-*, nvidia-*, etc.
+(If you DO use the archinstall hyprland/GPU profiles, some packages
+below will already be installed - pacman/yay will simply skip them.)
+
+WHAT CHANGED FROM follow2.txt (summary of fixes)
+------------------------------------------------
+- ADDED deployment of the Hyprland config (~/.config/hypr) - was missing.
+- ADDED creation of the /usr/local/bin session launcher script and
+  reconciled its name with greetd's config.toml (was missing/mismatched).
+- FIXED vtrgb: it is TWO separate files - a color palette (vtrgb) copied
+  to /etc/vtrgb AND a unit file (vtrgb.service) copied to
+  /etc/systemd/system. follow2 conflated them.
+- ADDED missing runtime packages: cliphist, wl-clipboard, grim, slurp,
+  hypridle, hyprlock.
+- ADDED missing helper packages referenced by configs: pacman-contrib
+  (checkupdates), pavucontrol, nm-connection-editor, mesa-utils (glxinfo),
+  pipewire-pulse, python-typing_extensions.
+- FIXED auto-cpufreq: it is an AUR package, not official.
+- FIXED NVIDIA package name: nvidia-open-dkms (nvidia-dkms-open does not
+  exist) and added real modeset enablement (mkinitcpio MODULES).
+- HYBRID GPU (hardware-correct for Ryzen 7840HS/780M + RTX A500 Ampere):
+  removed the wrong/unneeded xf86-video-ati + xf86-video-amdgpu; added
+  AMD iGPU video decode (libva-mesa-driver, mesa-vdpau); set AMD as the
+  primary render device (AQ_DRM_DEVICES via uwsm env); enabled NVIDIA
+  RTD3 runtime power-off (NVreg_DynamicPowerManagement=0x02) so the dGPU
+  idles suspended; added nvidia-prime (prime-run) for on-demand offload.
+  Dropped lib32-nvidia-utils + libva-nvidia-driver -> [multilib] not
+  needed.
+- DEDUPED bluetooth (was in sections 8 AND 10) and vtrgb (13 AND 19).
+- ADDED a real ufw section (was only in the package list).
+- ADDED username templating ($HOME / $USER) - configs shipped with a
+  hardcoded "tony" path must be fixed on deploy.
+- ADDED wallpaper deployment step (user supplies the image).
+
+
+=========================================================
+Repository structure expected
+=========================================================
+
+/
+├── .config/
+│   ├── alacritty/
+│   ├── ashell/
+│   ├── hypr/            <-- the Hyprland Lua config (MUST be deployed)
+│   ├── mako/
+│   └── rofi/
+│
+├── greetd/
+│   └── config.toml
+│
+├── wallpaper/           <-- wallpaper image(s)
+├── install.sh           <-- the installer (this guide, automated)
+│
+├── .bashrc
+├── .zshrc
+├── starship.toml
+├── start-hyprland-session   <-- session launcher, goes to /usr/local/bin
+├── vtrgb                    <-- console COLOR PALETTE, goes to /etc/vtrgb
+├── vtrgb.service            <-- systemd UNIT, goes to /etc/systemd/system
+└── follow3.txt
+
+
+=========================================================
+PRE-FLIGHT NOTES (read before scripting)
+=========================================================
+
+1. Run as your normal (sudo-capable) user, NOT as root. The script uses
+   sudo where needed and installs user services under your account.
+
+2. Username: several shipped configs contain a hardcoded "/home/tony"
+   path (e.g. .config/ashell/config.toml). On deploy, replace "tony"
+   with the actual $USER, or prefer $HOME-relative paths.
+
+3. The Hyprland config uses the NEW Lua config format (hl.* API,
+   require("monitors") etc.). This requires a recent Hyprland build with
+   Lua-config support. Verify the entry-point file name Hyprland expects
+   for your version before relying on it.
+
+4. Do NOT deploy the leftover files: hyprland-default.bak, and the stray
+   .config/hypr/.bashrc / .config/hypr/.zshrc.
+
+
+=========================================================
+SECTION 1 - System Preparation
+=========================================================
+
+Update the system:
+
+    sudo pacman -Syu --noconfirm
+
+Install build requirements (needed to build AUR packages):
+
+    sudo pacman -S --needed --noconfirm base-devel git
+
+
+=========================================================
+SECTION 2 - Install yay (AUR helper)
+=========================================================
+
+    git clone https://aur.archlinux.org/yay.git
+    cd yay
+    makepkg -si --noconfirm
+    cd ..
+    yay --version        # verify
+
+
+=========================================================
+SECTION 3 - Core Hyprland packages
+=========================================================
+
+Official:
+
+    hyprland
+    uwsm                          # Universal Wayland Session Manager
+                                  #   -> launches Hyprland as a managed
+                                  #      systemd session (see Section 17)
+    xdg-desktop-portal-hyprland
+    xdg-desktop-portal            # base portal (dependency of the above)
+    xdg-utils                     # xdg-open: file/URL associations
+    qt5-wayland                   # Wayland platform plugin for Qt5 apps
+    qt6-wayland                   # Wayland platform plugin for Qt6 apps
+    hyprpolkitagent               # authentication agent
+    hyprpaper                     # wallpaper daemon
+    hypridle                      # idle daemon (used by autostart.lua)
+    hyprlock                      # screen locker (used by hypridle/ashell)
+
+Command:
+
+    sudo pacman -S --needed --noconfirm \
+        hyprland uwsm xdg-desktop-portal-hyprland xdg-desktop-portal \
+        xdg-utils qt5-wayland qt6-wayland \
+        hyprpolkitagent hyprpaper hypridle hyprlock
+
+
+=========================================================
+SECTION 4 - Wayland utilities (clipboard, screenshots)
+=========================================================
+
+These are required by autostart.lua and the screenshot keybind and are
+NOT optional:
+
+    wl-clipboard      # wl-copy / wl-paste (cliphist + screenshot copy)
+    cliphist          # clipboard history (started in autostart.lua)
+    grim              # screenshot capture
+    slurp             # region selection for grim
+
+Command:
+
+    sudo pacman -S --needed --noconfirm wl-clipboard cliphist grim slurp
+
+
+=========================================================
+SECTION 5 - Desktop applications
+=========================================================
+
+Official:
+
+    rofi              # launcher / applets
+    mako              # notifications
+    alacritty         # terminal
+    nautilus          # file manager
+    swayimg           # image viewer
+    firefox           # browser
+    brightnessctl     # backlight control (keybinds + hypridle)
+    playerctl         # media keys
+    mousepad          # simple GUI text editor (optional but used)
+
+Audio stack (wireplumber + pipewire + pulse compat for pavucontrol):
+
+    wireplumber
+    pipewire
+    pipewire-pulse
+    pavucontrol       # GUI mixer (ashell audio "more" button)
+
+Command:
+
+    sudo pacman -S --needed --noconfirm \
+        rofi mako alacritty nautilus swayimg firefox \
+        brightnessctl playerctl mousepad \
+        wireplumber pipewire pipewire-pulse pavucontrol
+
+AUR:
+
+    ashell            # status bar
+    brave-bin         # browser (brave)
+    mullvad-vpn-bin   # VPN client
+
+Command:
+
+    yay -S --needed --noconfirm ashell brave-bin mullvad-vpn-bin
+
+(Note: if you prefer building from source, use "brave" / "mullvad-vpn"
+instead of the -bin packages.)
+
+
+=========================================================
+SECTION 6 - Nautilus extensions
+=========================================================
+
+Official:
+
+    nautilus-image-converter
+
+AUR:
+
+    nautilus-admin-gtk4
+    nautilus-open-any-terminal
+
+Commands:
+
+    sudo pacman -S --needed --noconfirm nautilus-image-converter
+    yay -S --needed --noconfirm nautilus-admin-gtk4 nautilus-open-any-terminal
+
+Configure "Open Terminal Here" to use Alacritty:
+
+    gsettings set com.github.stunkymonkey.nautilus-open-any-terminal \
+        terminal 'alacritty'
+
+Expected: right-click in Nautilus -> "Open Terminal Here" opens Alacritty.
+
+
+=========================================================
+SECTION 7 - CLI environment + helpers
+=========================================================
+
+Official:
+
+    eza               # ls replacement (NOTE: eza, not the deprecated exa)
+    zoxide            # smart cd
+    zsh
+    starship          # prompt
+    fzf               # fuzzy finder (sourced in .zshrc)
+    bat               # cat replacement
+    pacman-contrib    # provides checkupdates (ashell Updates module)
+    mesa-utils        # provides glxinfo (GPU verification)
+    nm-connection-editor  # ashell wifi/vpn "more" button
+    vim               # CLI editor
+    nano              # CLI editor (usually present from base; harmless)
+    wget              # downloader
+    openssh           # ssh client + server (sshd NOT enabled - see note)
+
+Command:
+
+    sudo pacman -S --needed --noconfirm \
+        eza zoxide zsh starship fzf bat pacman-contrib mesa-utils \
+        nm-connection-editor vim nano wget openssh
+
+NOTE on openssh: the package installs sshd but this guide does NOT enable
+it. ufw is deny-incoming (Section 11), so even if enabled it would be
+unreachable until a port is opened. To run an SSH server later:
+    sudo systemctl enable --now sshd.service
+    sudo ufw allow ssh
+
+Set zsh as the default shell for the current user:
+
+    chsh -s "$(which zsh)"
+
+Deploy shell configuration (replace target files):
+
+    cp .bashrc        ~/.bashrc
+    cp .zshrc         ~/.zshrc
+    mkdir -p ~/.config
+    cp starship.toml  ~/.config/starship.toml
+
+(.zshrc sources /usr/share/fzf/key-bindings.zsh and completion.zsh, and
+inits zoxide + starship - all satisfied by the packages above.)
+
+
+=========================================================
+SECTION 8 - Fonts
+=========================================================
+
+    ttf-nerd-fonts-symbols
+    ttf-jetbrains-mono-nerd
+
+Command:
+
+    sudo pacman -S --needed --noconfirm \
+        ttf-nerd-fonts-symbols ttf-jetbrains-mono-nerd
+
+Purpose: icons/symbols for ashell, rofi, alacritty (JetBrainsMono Nerd
+Font is referenced directly in alacritty.toml and mako/config).
+
+
+=========================================================
+SECTION 9 - Bluetooth  (deduplicated - was sections 8 & 10)
+=========================================================
+
+    bluez
+    bluez-utils
+    blueberry         # GUI (ashell bluetooth "more" button)
+
+Command:
+
+    sudo pacman -S --needed --noconfirm bluez bluez-utils blueberry
+
+Enable + start service:
+
+    sudo systemctl enable --now bluetooth.service
+
+Verify:
+
+    systemctl status bluetooth.service
+
+
+=========================================================
+SECTION 10 - Power management (auto-cpufreq)
+=========================================================
+
+auto-cpufreq is an AUR package (NOT in the official repos).
+
+    yay -S --needed --noconfirm auto-cpufreq
+
+Dependency observed on this hardware (install if auto-cpufreq won't run):
+
+    sudo pacman -S --needed --noconfirm python-typing_extensions
+
+Enable + start:
+
+    sudo systemctl enable --now auto-cpufreq.service
+
+Verify:
+
+    systemctl status auto-cpufreq.service
+    auto-cpufreq --stats
+
+
+=========================================================
+SECTION 11 - Firewall (ufw)
+=========================================================
+
+    sudo pacman -S --needed --noconfirm ufw
+
+Configure baseline policy (deny incoming, allow outgoing):
+
+    sudo ufw default deny incoming
+    sudo ufw default allow outgoing
+    sudo ufw enable
+
+Enable at boot:
+
+    sudo systemctl enable ufw.service
+
+Verify:
+
+    sudo ufw status verbose
+
+(Deliberately NOT opening port 4444/tcp from rev-shell-firewall.txt -
+that is a reverse-shell/pentest rule and is excluded from the desktop
+baseline. Add manually only if you specifically need it.)
+
+
+=========================================================
+SECTION 12 - GPU drivers: AMD  (Radeon 780M / RDNA3, PRIMARY GPU)
+=========================================================
+
+The AMD iGPU is the DEFAULT/primary GPU. Everything runs on it; the
+NVIDIA dGPU stays asleep unless explicitly used (see Section 14).
+
+The kernel amdgpu driver (in-kernel) + Mesa do all the work on Wayland.
+NOTE: NO Xorg DDX packages. xf86-video-ati is for pre-2013 radeon cards
+(wrong hardware) and xf86-video-amdgpu is unused under Wayland - BOTH
+are intentionally omitted.
+
+    mesa
+    vulkan-radeon         # RADV Vulkan driver
+    vulkan-tools          # provides vulkaninfo
+    libva-mesa-driver     # VA-API hardware video decode on the iGPU
+    mesa-vdpau            # VDPAU hardware video decode on the iGPU
+
+Command:
+
+    sudo pacman -S --needed --noconfirm \
+        mesa vulkan-radeon vulkan-tools libva-mesa-driver mesa-vdpau
+
+(amdgpu firmware ships in linux-firmware, already present from the base
+install. No [multilib]/lib32 packages - 32-bit GPU accel is not needed.)
+
+Verify:
+
+    vulkaninfo --summary
+
+
+=========================================================
+SECTION 13 - GPU drivers: NVIDIA (RTX A500 / GA107 Ampere, dGPU)
+=========================================================
+
+Decision: OPEN kernel modules (nvidia-open supports Turing+; Ampere is
+supported). The dGPU is SECONDARY - installed and modeset-enabled for
+on-demand offload, but kept powered off when idle (Section 14).
+
+    nvidia-open-dkms
+    nvidia-utils
+    nvidia-prime          # provides prime-run for on-demand dGPU offload
+    egl-wayland
+    linux-headers         # required to build the dkms module
+    dkms                  # (dependency; install explicitly to be safe)
+
+Command:
+
+    sudo pacman -S --needed --noconfirm \
+        nvidia-open-dkms nvidia-utils nvidia-prime egl-wayland \
+        linux-headers dkms
+
+(No lib32-nvidia-utils / no libva-nvidia-driver: 32-bit accel is not
+needed, and video decode is done on the AMD iGPU, not NVIDIA. This means
+[multilib] does NOT need to be enabled - one less configuration step.)
+
+Module options - create /etc/modprobe.d/nvidia.conf with:
+
+    options nvidia_drm modeset=1 fbdev=1
+    options nvidia NVreg_DynamicPowerManagement=0x02
+
+    -> modeset=1 : required for Wayland/Hyprland.
+    -> NVreg_DynamicPowerManagement=0x02 : RTD3 fine-grained runtime
+       power management, lets the idle dGPU (and its VRAM) power OFF.
+
+Early-load the modules so KMS is available at boot. Edit
+/etc/mkinitcpio.conf and set:
+
+    MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+
+Regenerate the initramfs (also pulls in the new modprobe.d file):
+
+    sudo mkinitcpio -P
+
+Reboot:
+
+    sudo reboot
+
+Verify after reboot:
+
+    cat /sys/module/nvidia_drm/parameters/modeset      # expect: Y
+    nvidia-smi
+    lsmod | grep nvidia
+
+
+=========================================================
+SECTION 14 - Hybrid GPU: AMD-primary + dGPU power-off + verify
+=========================================================
+
+GOAL: Hyprland renders on the AMD iGPU by default; the NVIDIA dGPU stays
+suspended until you explicitly offload work to it.
+
+(1) Make the AMD iGPU the PRIMARY render device.
+    Hyprland's aquamarine backend reads AQ_DRM_DEVICES; the FIRST device
+    listed is primary. We point it at the amdgpu card node first.
+
+    The correct node is machine-specific - the install script auto-
+    detects which /dev/dri/cardN is bound to amdgpu. Manual check:
+
+        for c in /sys/class/drm/card[0-9]; do
+            printf '%s -> ' "$c"
+            basename "$(readlink -f "$c/device/driver")"
+        done
+        # note which cardN shows "amdgpu"
+
+    Set it in the uwsm session environment so it is exported BEFORE the
+    compositor starts:
+
+        mkdir -p ~/.config/uwsm
+        # example if amdgpu is card1 and nvidia is card0:
+        echo 'export AQ_DRM_DEVICES=/dev/dri/card1:/dev/dri/card0' \
+            >> ~/.config/uwsm/env
+
+    (The install script writes this line using the auto-detected node.
+    Using the wrong node can cause a black screen at login, so the
+    script verifies the amdgpu node exists before writing it.)
+
+(2) dGPU power-off is otherwise automatic.
+    nvidia-utils ships udev rules that enable RTD3 runtime PM for Turing+
+    GPUs; combined with NVreg_DynamicPowerManagement=0x02 (Section 13)
+    the idle dGPU suspends on its own. No service needed.
+    (nvidia-powerd.service = Dynamic Boost for PERFORMANCE, not battery -
+    intentionally NOT enabled.)
+
+(3) On-demand dGPU use:
+        prime-run <application>
+    or:
+        __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia <app>
+
+Verification:
+
+    lspci -k | grep -EA3 'VGA|3D|Display'     # both amdgpu + nvidia
+    lsmod | grep amdgpu                          # amdgpu loaded
+    lsmod | grep nvidia                          # nvidia loaded
+    glxinfo -B | grep "OpenGL renderer"          # should say AMD/Radeon
+    hyprctl systeminfo | grep -i gpu             # AMD is the active GPU
+
+    # dGPU should read "suspended" when idle (replace with your PCI addr,
+    # find it via: lspci | grep -i nvidia):
+    cat /sys/bus/pci/devices/0000:XX:00.0/power/runtime_status
+
+    # confirm offload routes to NVIDIA on demand:
+    prime-run glxinfo -B | grep "OpenGL renderer"   # should say NVIDIA
+
+CPU vs GPU battery note: auto-cpufreq (Section 10) manages the CPU only
+(governor + turbo, AC-aware). The dGPU power-off is handled by the
+NVIDIA config above. Together they cover battery on the CPU and dGPU;
+the AMD iGPU scales with the APU power budget automatically (faster when
+plugged in).
+
+External displays: on the P16v, external HDMI/USB-C outputs may be wired
+through the NVIDIA dGPU, so connecting an external monitor can wake it.
+This is expected hardware behaviour, not a misconfiguration.
+
+
+=========================================================
+SECTION 15 - Deploy application configs
+=========================================================
+
+Deploy every app config directory from the repo into ~/.config.
+IMPORTANT: this includes hypr/ (the Hyprland config), which follow2
+omitted. Do NOT copy hyprland-default.bak or the stray dotfiles inside
+.config/hypr/.
+
+    mkdir -p ~/.config
+
+    cp -r .config/hypr       ~/.config/    # Hyprland (Lua config)
+    cp -r .config/ashell     ~/.config/
+    cp -r .config/rofi       ~/.config/
+    cp -r .config/mako       ~/.config/
+    cp -r .config/alacritty  ~/.config/
+
+    # remove leftovers if present
+    rm -f ~/.config/hypr/hyprland-default.bak
+    rm -f ~/.config/hypr/.bashrc ~/.config/hypr/.zshrc
+
+Fix hardcoded username in ashell config (shipped with "/home/tony"):
+
+    sed -i "s#/home/tony#$HOME#g" ~/.config/ashell/config.toml
+
+Make rofi applet/launcher scripts executable:
+
+    chmod +x ~/.config/rofi/launchers/*/launcher.sh
+    chmod +x ~/.config/rofi/applets/bin/*.sh
+
+
+=========================================================
+SECTION 16 - Wallpaper
+=========================================================
+
+hyprpaper.conf references:
+    ~/Pictures/Wallpapers/wallhaven-7p8zg3.png
+
+The image is shipped in the repo folder wallpaper/ (singular):
+
+    mkdir -p ~/Pictures/Wallpapers
+    cp wallpaper/wallhaven-7p8zg3.png ~/Pictures/Wallpapers/
+
+If you swap the image, update the path in
+    ~/.config/hypr/hyprpaper.conf
+
+
+=========================================================
+SECTION 17 - Session launcher script  (/usr/local/bin) + uwsm
+=========================================================
+
+greetd's config.toml launches a command that MUST exist in PATH.
+We standardize on the name "start-hyprland-session" and launch Hyprland
+THROUGH uwsm so it runs as a managed systemd session.
+
+Background on uwsm launch mechanics:
+    Hyprland ships two session files in /usr/share/wayland-sessions/:
+        hyprland.desktop        -> Exec=Hyprland        (plain compositor)
+        hyprland-uwsm.desktop   -> Exec=uwsm start ...   (uwsm wrapper)
+    To start via uwsm we run "uwsm start hyprland.desktop" (the PLAIN
+    session file). Do NOT feed hyprland-uwsm.desktop to "uwsm start" or
+    you would wrap uwsm inside uwsm.
+
+Install the launcher (uwsm version):
+
+    sudo cp start-hyprland-session /usr/local/bin/start-hyprland-session
+    sudo chmod +x /usr/local/bin/start-hyprland-session
+
+Required contents of the launcher (UPDATE the shipped file to this):
+
+    #!/bin/sh
+    # Launch Hyprland as a managed uwsm session.
+    if uwsm check may-start; then
+        exec uwsm start hyprland.desktop
+    fi
+
+(The old contents were "exec Hyprland" - replace them. The
+"uwsm check may-start" guard prevents starting a second session if one
+is already running.)
+
+VERIFY the available session id on the target machine:
+
+    uwsm check                      # sanity check
+    ls /usr/share/wayland-sessions/ # confirm hyprland.desktop exists
+
+IMPORTANT NAME RECONCILIATION:
+The shipped greetd/config.toml active line currently calls
+"--cmd start-hyprland". Update it to point at this launcher's full path:
+    --cmd /usr/local/bin/start-hyprland-session
+so greetd (Section 18) and this script agree on the name.
+
+NOTE: with uwsm managing the session, the
+"dbus-update-activation-environment" line in autostart.lua is redundant
+(uwsm imports the environment into systemd/D-Bus itself). It is harmless
+to leave in place. Persistent env vars can also be set in
+~/.config/uwsm/env if you prefer them over environment.lua.
+
+
+=========================================================
+SECTION 18 - greetd + tuigreet login manager
+=========================================================
+
+Install:
+
+    sudo pacman -S --needed --noconfirm greetd greetd-tuigreet
+
+Disable any existing display manager (ignore error if none):
+
+    sudo systemctl disable --now sddm.service 2>/dev/null || true
+    sudo systemctl disable --now gdm.service  2>/dev/null || true
+
+Deploy greetd config:
+
+    sudo mkdir -p /etc/greetd
+    sudo cp greetd/config.toml /etc/greetd/config.toml
+
+Ensure the config's --cmd matches the launcher from Section 17, i.e.:
+
+    command = "tuigreet --remember --asterisks --width 60 \
+      --theme 'border=magenta;text=cyan;prompt=green;time=red;\
+      action=blue;button=yellow;container=black;input=red' \
+      --cmd /usr/local/bin/start-hyprland-session"
+    user = "greeter"
+
+Enable greetd:
+
+    sudo systemctl enable greetd.service
+
+Verify:
+
+    systemctl status greetd.service
+
+(Do not "start" greetd over an active session; it takes over the VT.
+It will come up on next reboot.)
+
+
+=========================================================
+SECTION 19 - TTY colors: vtrgb  (FIXED - two separate files)
+=========================================================
+
+Purpose: apply a custom TTY color palette before greetd/tuigreet loads.
+
+Requires setvtrgb (from the kbd package):
+
+    sudo pacman -S --needed --noconfirm kbd
+
+Copy BOTH files to their correct destinations:
+
+    # 1) the COLOR PALETTE  ->  /etc/vtrgb
+    sudo cp vtrgb /etc/vtrgb
+
+    # 2) the SYSTEMD UNIT   ->  /etc/systemd/system/vtrgb.service
+    sudo cp vtrgb.service /etc/systemd/system/vtrgb.service
+
+(The unit runs: /usr/bin/setvtrgb /etc/vtrgb, ordered Before=greetd.)
+
+Reload, enable, start:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable vtrgb.service
+    sudo systemctl start vtrgb.service
+
+Verify:
+
+    systemctl status vtrgb.service
+
+
+=========================================================
+SECTION 20 - User services (hyprpolkitagent)
+=========================================================
+
+hyprpolkitagent runs as a user service (also launched from autostart.lua,
+but enabling the unit makes it robust):
+
+    systemctl --user enable hyprpolkitagent.service
+
+Verify (after you are inside a Hyprland/graphical session):
+
+    systemctl --user status hyprpolkitagent.service
+
+(Optional) run ashell as a user service instead of the autostart line -
+see the commented instructions inside .config/hypr/hyprland.lua.
+
+
+=========================================================
+SECTION 21 - Final systemd reload + review
+=========================================================
+
+    sudo systemctl daemon-reload
+    systemctl list-unit-files --state=enabled
+
+Expected system services enabled:
+    bluetooth.service
+    auto-cpufreq.service
+    greetd.service
+    vtrgb.service
+    ufw.service
+
+Expected user services enabled:
+    hyprpolkitagent.service
+
+
+=========================================================
+SECTION 22 - Reboot into the desktop
+=========================================================
+
+    sudo reboot
+
+Expected boot flow:
+
+    greetd -> tuigreet -> start-hyprland-session
+        -> uwsm start hyprland.desktop -> Hyprland (managed session)
+        -> autostart.lua brings up:
+             hyprpaper (wallpaper)
+             hypridle (idle/lock)
+             hyprpolkitagent (auth)
+             ashell (status bar)
+             cliphist (clipboard history)
+        -> complete desktop environment
+
+
+=========================================================
+SECTION 23 - Consolidated package list
+=========================================================
+
+OFFICIAL (pacman):
+    base-devel
+    git
+    hyprland
+    uwsm
+    xdg-desktop-portal-hyprland
+    xdg-desktop-portal
+    xdg-utils
+    qt5-wayland
+    qt6-wayland
+    hyprpolkitagent
+    hyprpaper
+    hypridle
+    hyprlock
+    wl-clipboard
+    cliphist
+    grim
+    slurp
+    rofi
+    mako
+    alacritty
+    nautilus
+    swayimg
+    firefox
+    brightnessctl
+    playerctl
+    mousepad
+    wireplumber
+    pipewire
+    pipewire-pulse
+    pavucontrol
+    nautilus-image-converter
+    eza
+    zoxide
+    zsh
+    starship
+    fzf
+    bat
+    pacman-contrib
+    mesa-utils
+    nm-connection-editor
+    vim
+    nano
+    wget
+    openssh
+    ttf-nerd-fonts-symbols
+    ttf-jetbrains-mono-nerd
+    bluez
+    bluez-utils
+    blueberry
+    ufw
+    greetd
+    greetd-tuigreet
+    kbd
+    mesa
+    vulkan-radeon
+    vulkan-tools
+    libva-mesa-driver         # AMD iGPU VA-API video decode
+    mesa-vdpau                # AMD iGPU VDPAU video decode
+    nvidia-open-dkms
+    nvidia-utils
+    nvidia-prime              # prime-run (on-demand dGPU offload)
+    egl-wayland
+    linux-headers
+    dkms
+    python-typing_extensions  # auto-cpufreq dependency
+
+    # (intentionally NOT installed: xf86-video-amdgpu, xf86-video-ati,
+    #  lib32-nvidia-utils, libva-nvidia-driver - see Sections 12/13.
+    #  [multilib] does not need to be enabled.)
+
+AUR (yay):
+    yay                       # (bootstrapped in Section 2)
+    ashell
+    brave-bin
+    mullvad-vpn-bin
+    nautilus-admin-gtk4
+    nautilus-open-any-terminal
+    auto-cpufreq
+
+
+=========================================================
+SECTION 24 - Open items / verify before shipping the script
+=========================================================
+
+1. Wallpaper image must be added to repo (wallpapers/) - user-supplied.
+2. Confirm the Hyprland Lua-config entry point for the installed Hyprland
+   version (hyprland.lua vs hyprland.conf) - the config uses the new
+   Lua API. Test on target before trusting unattended.
+3. [multilib] is NOT required (no lib32 packages). Leave it disabled.
+   AQ_DRM_DEVICES: the install script must auto-detect the amdgpu card
+   node and verify it exists before writing ~/.config/uwsm/env - a wrong
+   node can black-screen the login. Confirm on the target with the
+   /sys/class/drm loop in Section 14.
+4. Username templating: verify no other shipped config hardcodes "tony".
+5. brave-bin / mullvad-vpn-bin vs source builds - pick per preference.
+6. uwsm: confirm "uwsm check" passes and that
+   /usr/share/wayland-sessions/hyprland.desktop exists on the target, so
+   "uwsm start hyprland.desktop" resolves (Section 17). The shipped
+   start-hyprland-session file (currently "exec Hyprland") must be
+   updated to the uwsm launcher, and greetd/config.toml's --cmd updated
+   to /usr/local/bin/start-hyprland-session - the install script will
+   handle both.
+
+=========================================================
+END
+=========================================================

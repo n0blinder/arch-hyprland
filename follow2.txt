@@ -1,0 +1,786 @@
+=========================================================
+Arch Linux Hyprland Automated Installation Plan
+=========================================================
+
+Purpose:
+Install required packages, enable services, deploy dotfiles,
+configure Hyprland environment, and apply system settings.
+
+Repository structure expected:
+
+/
+├── .config/
+│   ├── alacritty/
+│   ├── ashell/
+│   ├── hypr/
+│   ├── mako/
+│   └── rofi/
+│
+├── greetd/
+│   └── config.toml
+│
+├── .bashrc
+├── .zshrc
+├── starship.toml
+├── start-hyprland-session
+├── vtrgb
+└── follow.txt
+
+
+=========================================================
+SECTION 1 - System Preparation
+=========================================================
+
+Update system:
+
+sudo pacman -Syu
+
+
+Install build requirements:
+
+Packages:
+
+base-devel
+git
+
+
+Purpose:
+
+Required for building AUR packages with yay.
+
+
+=========================================================
+SECTION 2 - Install yay AUR Helper
+=========================================================
+
+Clone yay:
+
+git clone https://aur.archlinux.org/yay.git
+
+
+Enter directory:
+
+cd yay
+
+
+Build:
+
+makepkg -si
+
+
+Verify:
+
+yay --version
+
+
+=========================================================
+SECTION 3 - Install Core Hyprland Packages
+=========================================================
+
+
+Install:
+
+hyprland
+
+xdg-desktop-portal-hyprland
+
+hyprpolkitagent
+
+hyprpaper
+
+
+Purpose:
+
+Hyprland compositor
+Wayland portal integration
+Authentication agent
+Wallpaper manager
+
+
+=========================================================
+SECTION 4 - Desktop Applications
+=========================================================
+
+
+Install official packages:
+
+
+rofi
+
+mako
+
+alacritty
+
+nautilus
+
+brightnessctl
+
+wireplumber
+
+playerctl
+
+swayimg
+
+firefox
+
+
+AUR packages:
+
+ashell
+
+brave
+
+mullvad-vpn
+
+
+=========================================================
+SECTION 5 - Nautilus Extensions
+=========================================================
+
+
+Install:
+
+
+nautilus-image-converter
+
+nautilus-admin-gtk4
+
+nautilus-open-any-terminal
+
+
+After installation configure terminal integration:
+
+
+Set Nautilus terminal:
+
+gsettings set \
+com.github.stunkymonkey.nautilus-open-any-terminal terminal 'alacritty'
+
+
+Expected result:
+
+Right click in Nautilus:
+Open Terminal Here
+
+opens Alacritty.
+
+
+=========================================================
+SECTION 6 - CLI Environment
+=========================================================
+
+
+Install:
+
+
+eza
+
+zoxide
+
+zsh
+
+starship
+
+fzf
+
+bat
+
+
+Replace user shell:
+
+
+chsh -s "$(which zsh)"
+
+
+Deploy shell configuration:
+
+
+Replace:
+
+~/.zshrc
+
+
+with:
+
+repository/.zshrc
+
+
+Replace:
+
+~/.bashrc
+
+
+with:
+
+repository/.bashrc
+
+
+Replace:
+
+~/.config/starship.toml
+
+
+with:
+
+repository/starship.toml
+
+
+Reload shell:
+
+exec zsh
+
+
+=========================================================
+SECTION 7 - Fonts
+=========================================================
+
+
+Install:
+
+
+ttf-nerd-fonts-symbols
+
+ttf-jetbrains-mono-nerd
+
+
+Purpose:
+
+Required for:
+- ASHELL
+- Rofi icons
+- Terminal symbols
+
+
+=========================================================
+SECTION 8 - Bluetooth
+=========================================================
+
+
+Install:
+
+
+bluez
+
+bluez-utils
+
+blueberry
+
+
+Enable service:
+
+
+sudo systemctl enable --now bluetooth
+
+
+Verify:
+
+systemctl status bluetooth
+
+
+=========================================================
+SECTION 9 - Auto CPU Frequency Service
+=========================================================
+
+Install:
+
+auto-cpufreq
+
+
+Enable service:
+
+sudo systemctl enable --now auto-cpufreq.service
+
+
+Verify:
+
+systemctl status auto-cpufreq.service
+
+
+=========================================================
+SECTION 10 - Bluetooth Service
+=========================================================
+
+Install:
+
+bluez
+bluez-utils
+blueberry
+
+
+Enable Bluetooth:
+
+sudo systemctl enable --now bluetooth.service
+
+
+Verify:
+
+systemctl status bluetooth.service
+
+
+=========================================================
+SECTION 11 - Hyprpolkitagent User Service
+=========================================================
+
+Install:
+
+hyprpolkitagent
+
+
+Enable/start user service:
+
+
+systemctl --user enable hyprpolkitagent.service
+
+systemctl --user start hyprpolkitagent.service
+
+
+Verify:
+
+
+systemctl --user status hyprpolkitagent.service
+
+
+=========================================================
+SECTION 12 - greetd Login Manager Service
+=========================================================
+
+Install:
+
+greetd
+greetd-tuigreet
+
+
+Disable existing display manager if present:
+
+
+Example:
+
+sudo systemctl disable --now sddm.service
+
+
+Copy greetd configuration:
+
+Repository:
+
+greetd/config.toml
+
+
+Replace:
+
+/etc/greetd/config.toml
+
+
+Command:
+
+
+sudo cp greetd/config.toml /etc/greetd/config.toml
+
+
+Enable greetd:
+
+
+sudo systemctl enable greetd.service
+
+
+Start greetd:
+
+
+sudo systemctl start greetd.service
+
+
+Verify:
+
+
+systemctl status greetd.service
+
+
+=========================================================
+SECTION 13 - Create vtrgb Console Color Service
+=========================================================
+
+Purpose:
+
+Apply custom TTY color palette before greetd/tuigreet loads.
+
+
+Repository file:
+
+vtrgb
+
+
+This file is a systemd service unit.
+
+
+Copy service file:
+
+
+sudo cp vtrgb \
+/etc/systemd/system/vtrgb.service
+
+
+Reload systemd units:
+
+
+sudo systemctl daemon-reload
+
+
+Enable service:
+
+
+sudo systemctl enable vtrgb.service
+
+
+Start service:
+
+
+sudo systemctl start vtrgb.service
+
+
+Verify:
+
+
+systemctl status vtrgb.service
+
+
+Expected:
+
+TTY colors are applied before the greetd login screen appears.
+
+
+=========================================================
+SECTION 14 - Systemd Service Final Reload
+=========================================================
+
+After installing all custom services:
+
+
+sudo systemctl daemon-reload
+
+
+List enabled custom services:
+
+
+systemctl list-unit-files --state=enabled
+
+
+Expected enabled services:
+
+
+bluetooth.service
+
+auto-cpufreq.service
+
+greetd.service
+
+vtrgb.service
+
+
+User services:
+
+
+hyprpolkitagent.service
+
+
+=========================================================
+SECTION 15 - Deploy ASHELL Configuration
+=========================================================
+
+
+Repository:
+
+.config/ashell/
+
+
+Replace:
+
+
+~/.config/ashell/
+
+
+=========================================================
+SECTION 16 - Deploy Rofi Configuration
+=========================================================
+
+
+Repository:
+
+.config/rofi/
+
+
+Replace:
+
+
+~/.config/rofi/
+
+
+=========================================================
+SECTION 17 - Deploy Mako Notification Configuration
+=========================================================
+
+
+Repository:
+
+.config/mako/
+
+
+Replace:
+
+
+~/.config/mako/
+
+
+=========================================================
+SECTION 18 - Deploy Alacritty Configuration
+=========================================================
+
+
+Repository:
+
+.config/alacritty/
+
+
+Replace:
+
+
+~/.config/alacritty/
+
+
+=========================================================
+SECTION 19 - Keyboard / Console Color Service
+=========================================================
+
+
+Repository file:
+
+
+vtrgb
+
+
+Copy to:
+
+
+/etc/systemd/system/vtrgb.service
+
+
+Command:
+
+
+sudo cp vtrgb \
+/etc/systemd/system/vtrgb.service
+
+
+Enable:
+
+
+sudo systemctl enable vtrgb.service
+
+
+=========================================================
+SECTION 20 - NVIDIA GPU Setup
+=========================================================
+
+
+This section applies only to systems containing Nvidia GPU.
+
+
+Install:
+
+
+nvidia-dkms-open
+
+nvidia-utils
+
+lib32-nvidia-utils
+
+egl-wayland
+
+linux-headers
+
+
+After installation:
+
+
+Regenerate initramfs:
+
+
+sudo mkinitcpio -P
+
+
+Enable Nvidia DRM modeset:
+
+
+Verify:
+
+
+cat /sys/module/nvidia_drm/parameters/modeset
+
+
+Expected:
+
+Y
+
+
+Reboot:
+
+
+sudo reboot
+
+
+Verification:
+
+
+nvidia-smi
+
+
+Check modules:
+
+
+lsmod | grep nvidia
+
+
+=========================================================
+SECTION 21 - AMD GPU Support
+=========================================================
+
+
+Install:
+
+
+mesa
+
+vulkan-radeon
+
+vulkan-tools
+
+xf86-video-amdgpu
+
+xf86-video-ati
+
+
+Verify:
+
+
+vulkaninfo --summary
+
+
+=========================================================
+SECTION 22 - Nvidia + AMD Hybrid Verification
+=========================================================
+
+
+Commands:
+
+
+lspci -k | grep -EA3 'VGA|3D|Display'
+
+
+Check:
+
+
+amdgpu loaded
+
+nvidia loaded
+
+
+OpenGL:
+
+
+glxinfo -B
+
+
+=========================================================
+SECTION 23 - Final Package List
+=========================================================
+
+
+Official:
+
+base-devel
+git
+hyprland
+xdg-desktop-portal-hyprland
+hyprpolkitagent
+hyprpaper
+rofi
+mako
+alacritty
+nautilus
+brightnessctl
+wireplumber
+playerctl
+auto-cpufreq
+eza
+zoxide
+zsh
+starship
+fzf
+bat
+swayimg
+greetd
+greetd-tuigreet
+kbd
+bluez
+bluez-utils
+blueberry
+ufw
+firefox
+mesa
+vulkan-radeon
+vulkan-tools
+xf86-video-amdgpu
+xf86-video-ati
+linux-headers
+ttf-nerd-fonts-symbols
+ttf-jetbrains-mono-nerd
+
+
+AUR:
+
+yay
+ashell
+nautilus-admin-gtk4
+nautilus-open-any-terminal
+brave
+mullvad-vpn
+
+
+Optional Nvidia:
+
+nvidia-dkms-open
+nvidia-utils
+lib32-nvidia-utils
+egl-wayland
+
+
+=========================================================
+SECTION 24 - Final Reboot
+=========================================================
+
+
+After all configuration:
+
+
+sudo reboot
+
+
+Expected boot flow:
+
+
+greetd
+    |
+    |
+tuigreet
+    |
+    |
+Hyprland
+    |
+    |
+ASHELL
+    |
+    |
+Complete desktop environment
+
+
+=========================================================
+END
+=========================================================

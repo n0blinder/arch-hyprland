@@ -1,0 +1,8 @@
+#!/bin/sh
+# Installed to /usr/local/bin/start-hyprland-session
+# Launched by greetd/tuigreet. Starts Hyprland as a managed uwsm session
+# so user services and graphical-session.target behave correctly.
+
+if uwsm check may-start; then
+    exec uwsm start hyprland.desktop
+fi

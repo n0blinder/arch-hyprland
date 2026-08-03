@@ -1,0 +1,8 @@
+[terminal]
+vt = 1
+
+[default_session]
+# command = "tuigreet --remember --asterisks --width 60 --theme 'border=magenta;text=cyan;prompt=green;time=red;action=blue;button=yellow;container=black;input=red' --cmd /usr/local/bin/start-hyprland-session"
+
+command = "tuigreet --remember --asterisks --width 60 --theme 'border=magenta;text=cyan;prompt=green;time=red;action=blue;button=yellow;container=black;input=red' --cmd /usr/local/bin/start-hyprland-session"
+user = "greeter"

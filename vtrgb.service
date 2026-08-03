@@ -1,0 +1,11 @@
+[Unit]
+Description=Load custom virtual terminal colours
+Before=greetd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/setvtrgb /etc/vtrgb
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

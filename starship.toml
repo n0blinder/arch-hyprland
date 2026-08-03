@@ -1,0 +1,11 @@
+format = """
+$directory$character
+"""
+
+[directory]
+style = "cyan"
+format = "[$path]($style) "
+
+[character]
+success_symbol = "[❯](cyan)"
+error_symbol = "[❯](red)"
