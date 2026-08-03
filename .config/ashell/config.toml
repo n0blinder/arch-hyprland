@@ -107,7 +107,7 @@ show_bodies = true
 [settings]
 # Optional: disable hover tooltips on status indicators
 # enable_tooltips = false
-lock_cmd = "playerctl --all-players pause; nixGL hyprlock &"
+lock_cmd = "playerctl --all-players pause; hyprlock &"
 # shutdown_cmd = "shutdown now"                   # (default)
 # suspend_cmd = "systemctl suspend"               # (default)
 # hibernate_cmd = "systemctl hibernate"           # (default: None)

@@ -177,6 +177,7 @@ SECTION 5 - Desktop applications
 Official:
 
     rofi              # launcher / applets
+    papirus-icon-theme # icon theme referenced by rofi/config.rasi
     mako              # notifications
     alacritty         # terminal
     nautilus          # file manager
@@ -196,7 +197,7 @@ Audio stack (wireplumber + pipewire + pulse compat for pavucontrol):
 Command:
 
     sudo pacman -S --needed --noconfirm \
-        rofi mako alacritty nautilus swayimg firefox \
+        rofi papirus-icon-theme mako alacritty nautilus swayimg firefox \
         brightnessctl playerctl mousepad \
         wireplumber pipewire pipewire-pulse pavucontrol
 
@@ -600,14 +601,14 @@ Install the launcher (uwsm version):
 Required contents of the launcher (UPDATE the shipped file to this):
 
     #!/bin/sh
-    # Launch Hyprland as a managed uwsm session.
-    if uwsm check may-start; then
-        exec uwsm start hyprland.desktop
-    fi
+    exec uwsm start -- hyprland.desktop
 
-(The old contents were "exec Hyprland" - replace them. The
-"uwsm check may-start" guard prevents starting a second session if one
-is already running.)
+IMPORTANT: do NOT wrap this in `uwsm check may-start`. That check is only
+for shell-profile / TTY-autologin (it verifies the parent is a login
+shell and tty1 is foreground). In a display-manager context (greetd/
+tuigreet --cmd) it FAILS, so the launcher exits without starting a
+session and greetd simply reloads the greeter. Display managers must
+call `uwsm start` directly.
 
 VERIFY the available session id on the target machine:
 
@@ -684,6 +685,13 @@ Copy BOTH files to their correct destinations:
     sudo cp vtrgb.service /etc/systemd/system/vtrgb.service
 
 (The unit runs: /usr/bin/setvtrgb /etc/vtrgb, ordered Before=greetd.)
+
+vtrgb FILE FORMAT (setvtrgb auto-detects): the palette file must be
+EITHER exactly 16 lines of "#rrggbb" hex triplets, OR exactly 3 lines of
+16 comma-separated decimal (0-255) values (red, green, blue). No blank
+lines - a leading/trailing blank line causes:
+    setvtrgb: Error: Invalid value in field 1 in line 1
+This repo uses the 16-line hex form.
 
 Reload, enable, start:
 
@@ -773,6 +781,7 @@ OFFICIAL (pacman):
     grim
     slurp
     rofi
+    papirus-icon-theme
     mako
     alacritty
     nautilus

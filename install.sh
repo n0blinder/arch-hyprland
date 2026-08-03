@@ -42,8 +42,8 @@ OFFICIAL_PKGS=(
     qt5-wayland qt6-wayland hyprpolkitagent hyprpaper hypridle hyprlock
     # wayland utilities
     wl-clipboard cliphist grim slurp
-    # desktop apps
-    rofi mako alacritty nautilus swayimg firefox
+    # desktop apps (papirus-icon-theme = rofi launcher icons)
+    rofi papirus-icon-theme mako alacritty nautilus swayimg firefox
     brightnessctl playerctl mousepad
     # audio
     wireplumber pipewire pipewire-pulse pavucontrol

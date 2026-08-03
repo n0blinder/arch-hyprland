@@ -2,7 +2,11 @@
 # Installed to /usr/local/bin/start-hyprland-session
 # Launched by greetd/tuigreet. Starts Hyprland as a managed uwsm session
 # so user services and graphical-session.target behave correctly.
+#
+# NOTE: `uwsm check may-start` is intentionally NOT used here. It is only
+# meant for shell-profile / TTY-autologin (it checks "parent is a login
+# shell" and "tty1 in foreground"), and it FAILS in a display-manager
+# context -- which makes greetd simply reload the greeter instead of
+# starting a session. Display managers must call `uwsm start` directly.
 
-if uwsm check may-start; then
-    exec uwsm start hyprland.desktop
-fi
+exec uwsm start -- hyprland.desktop
