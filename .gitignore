@@ -21,5 +21,11 @@ greetd/vtrgb
 .config/hypr/.bashrc
 .config/hypr/.zshrc
 
-# Debug screenshots dropped at the repo root (does not affect wallpaper/ or rofi images)
+# Debug screenshots/photos dropped at the repo root
+# (does not affect wallpaper/ or .config/rofi/images/)
 /*.png
+/*.jpg
+/*.jpeg
+
+# Personal scratch TODO (not part of the installer)
+next-steps.txt

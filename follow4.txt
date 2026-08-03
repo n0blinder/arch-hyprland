@@ -1,0 +1,184 @@
+=========================================================
+Arch Linux Hyprland Install Plan (v4) - MODULAR (3 scripts)
+=========================================================
+
+Purpose:
+Same end goal as follow3.txt - a fully configured Hyprland desktop on a
+ThinkPad P16v Gen1 (AMD Ryzen 7 PRO 7840HS / Radeon 780M iGPU + RTX A500
+NVIDIA dGPU) - but the work is split into THREE scripts by concern, so
+each can be run, re-run, and debugged independently:
+
+    1. install.sh              base desktop (packages, services, dotfiles,
+                               configs, AMD iGPU userspace). Boots straight
+                               into a working Hyprland on the AMD iGPU.
+
+    2. gpu-driver-install.sh   the NVIDIA dGPU driver (open kernel modules)
+                               + DRM modeset. Makes the discrete GPU usable.
+
+    3. battery-optimize.sh     GPU power tuning - keep the idle dGPU
+                               SUSPENDED, wake on demand (prime-run).
+
+follow3.txt remains the annotated single-file reference / rationale. v4
+only changes HOW it is packaged, not the packages/config themselves.
+
+All prior goals & assumptions are UNCHANGED:
+- clean archinstall WITHOUT the GUI/GPU profiles (locale, partitions,
+  swap, timezone, users, NetworkManager already done)
+- greetd + tuigreet login (no uwsm), custom vtrgb TTY colours
+- run on the AMD iGPU by default; NVIDIA dGPU only when needed, suspended
+  otherwise for battery
+- auto-cpufreq for CPU power; ufw firewall (no port 4444); sshd not enabled
+
+
+=========================================================
+WHY THE SPLIT (and why mesa stays in install.sh)
+=========================================================
+
+Hyprland needs the AMD userspace (mesa/EGL/GBM) to render the desktop on
+the iGPU - without it you get "Backend::create() failed". So the AMD GPU
+userspace is NOT an optional "driver"; it is part of making the desktop
+work, and it lives in install.sh. Only the NVIDIA dGPU is truly optional
+and separable, so it (and its power tuning) are the later scripts.
+
+Result: install.sh ALONE gives a complete, working desktop. The other two
+add the discrete GPU and tune its power.
+
+
+=========================================================
+RUN ORDER
+=========================================================
+
+Prep (fresh Arch, no GUI, NetworkManager working, logged in on the TTY):
+
+    sudo pacman -Sy --needed git
+    git clone https://github.com/n0blinder/arch-hyprland.git
+    cd arch-hyprland
+    chmod +x install.sh gpu-driver-install.sh battery-optimize.sh
+
+Then, run as your NORMAL user (each script sudo's where needed):
+
+    ./install.sh            # -> reboot -> greetd -> pick "Hyprland" -> desktop
+    ./gpu-driver-install.sh # -> reboot (NVIDIA modeset)
+    ./battery-optimize.sh   # -> reboot (dGPU suspend)
+
+Each script offers a reboot at the end. You can stop after install.sh and
+have a working desktop; the GPU/battery scripts are additive.
+
+NOTE: run as your user, NOT with sudo - the scripts refuse to run as root
+(makepkg/yay must not run as root, and configs must land in your $HOME).
+
+
+=========================================================
+1. install.sh  -  BASE DESKTOP
+=========================================================
+
+Installs (official + AUR via yay) and configures everything except the
+NVIDIA driver and power tuning:
+
+- Hyprland core: hyprland, xdg-desktop-portal-hyprland, xdg-desktop-portal,
+  xdg-utils, qt5-wayland, qt6-wayland, hyprpolkitagent, hyprpaper,
+  hypridle, hyprlock
+- Wayland utils: wl-clipboard, cliphist, grim, slurp
+- Apps: rofi (+papirus-icon-theme), mako, alacritty, nautilus, swayimg,
+  firefox, brightnessctl, playerctl, mousepad
+- Audio: wireplumber, pipewire, pipewire-pulse, pavucontrol
+- Nautilus ext: nautilus-image-converter (official),
+  nautilus-admin-gtk4 + nautilus-open-any-terminal (AUR)
+- CLI: eza, zoxide, zsh, starship, fzf, bat, pacman-contrib, mesa-utils,
+  nm-connection-editor, vim, nano, wget, openssh
+- Fonts: ttf-nerd-fonts-symbols, ttf-jetbrains-mono-nerd
+- Bluetooth: bluez, bluez-utils, blueberry (AUR)
+- Firewall: ufw
+- Login: greetd, greetd-tuigreet, kbd
+- AMD iGPU userspace: mesa, vulkan-radeon, vulkan-tools, libva-mesa-driver
+- CPU power: auto-cpufreq (AUR) + python-typing_extensions
+- Browsers/VPN (AUR): ashell, brave-bin, mullvad-vpn-bin
+
+Deploys: .bashrc, .zshrc, starship.toml; ~/.config/{hypr,ashell,rofi,mako,
+alacritty}; wallpaper -> ~/Pictures/Wallpapers; greetd/config.toml ->
+/etc/greetd; vtrgb -> /etc/vtrgb + vtrgb.service unit. Sets zsh as shell,
+retargets the ashell /home/tony path to $HOME, makes rofi scripts +x.
+
+Enables: bluetooth, auto-cpufreq, greetd, vtrgb, ufw (system);
+hyprpolkitagent (user). ufw = deny incoming / allow outgoing.
+
+Login model: greetd/tuigreet with --remember-session and NO --cmd. It
+launches the distro's own hyprland.desktop directly (pick "Hyprland" once,
+remembered). No custom launcher script.
+
+Result after reboot: greetd -> tuigreet -> Hyprland on the AMD iGPU.
+
+
+=========================================================
+2. gpu-driver-install.sh  -  NVIDIA dGPU DRIVER
+=========================================================
+
+Installs the open NVIDIA kernel modules (Ampere/RTX A500 supported):
+
+    nvidia-open-dkms  nvidia-utils  nvidia-prime  egl-wayland
+    linux-headers  dkms
+
+Enables DRM modeset (required on Wayland):
+
+    /etc/modprobe.d/nvidia.conf:
+        options nvidia_drm modeset=1 fbdev=1
+    /etc/mkinitcpio.conf:
+        MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+    sudo mkinitcpio -P
+
+REBOOT required. Verify after reboot:
+    cat /sys/module/nvidia_drm/parameters/modeset   # Y
+    nvidia-smi
+    prime-run glxinfo -B | grep "OpenGL renderer"    # NVIDIA
+
+(No lib32/libva-nvidia/multilib: 32-bit accel not needed; video decode is
+done on the AMD iGPU. prime-run offloads apps to the dGPU on demand.)
+
+
+=========================================================
+3. battery-optimize.sh  -  dGPU SUSPEND / BATTERY
+=========================================================
+
+Keeps the idle NVIDIA dGPU powered down; the AMD iGPU runs the desktop.
+
+    /etc/modprobe.d/nvidia-pm.conf:
+        options nvidia NVreg_DynamicPowerManagement=0x02   # RTD3 fine-grained
+    /etc/udev/rules.d/80-nvidia-pm.rules:
+        power/control = auto for the NVIDIA VGA/3D PCI functions
+    sudo mkinitcpio -P
+
+OPTIONAL (printed, NOT auto-applied): if the dGPU still won't suspend
+because Hyprland opened it too, pin AMD as the sole render device by
+adding to /etc/environment (read by pam_env before the session):
+    AQ_DRM_DEVICES=/dev/dri/by-path/pci-<amd>-card
+Test that the desktop still starts before relying on it - a wrong node
+black-screens the login. (This is intentionally manual: auto-forcing it
+previously caused Backend::create() failures.)
+
+REBOOT required. Verify after reboot (idle a few seconds first):
+    for d in /sys/bus/pci/devices/*/; do
+      [ "$(cat $d/vendor 2>/dev/null)" = "0x10de" ] &&
+      echo "ctrl=$(cat $d/power/control) status=$(cat $d/power/runtime_status)"
+    done
+    # want:  ctrl=auto  status=suspended
+
+CPU battery is separate and already handled by auto-cpufreq (install.sh):
+    auto-cpufreq --stats
+
+nvidia-powerd (Dynamic Boost = performance, not battery) is intentionally
+NOT enabled.
+
+
+=========================================================
+NOTES
+=========================================================
+
+- SUPER+M logs out (hyprctl dispatch exit). SUPER+SPACE = rofi launcher.
+- The dGPU also wakes for external displays wired through it (expected on
+  the P16v) and for prime-run / CUDA workloads.
+- Everything is idempotent; re-running a script is safe.
+- Detailed rationale for every package/step: see follow3.txt.
+
+=========================================================
+END
+=========================================================

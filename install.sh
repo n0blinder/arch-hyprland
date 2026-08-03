@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 #
-# Arch Linux + Hyprland post-install setup (ThinkPad P16v Gen1).
-# See follow3.txt for the annotated rationale behind every step.
+# Arch Linux + Hyprland - BASE DESKTOP install (ThinkPad P16v Gen1).
+# Packages, services, dotfiles and configuration. Includes the AMD iGPU
+# userspace (mesa) because Hyprland needs it to render the desktop.
+# Does NOT install the NVIDIA dGPU driver or any power tuning - those are
+# separate scripts (see follow4.txt):
+#     1. ./install.sh              <- you are here (reboot -> working desktop)
+#     2. ./gpu-driver-install.sh   <- NVIDIA dGPU driver
+#     3. ./battery-optimize.sh     <- dGPU suspend / battery tuning
 #
 # Run as your NORMAL user (NOT root) from inside the cloned repo:
 #     sudo pacman -Sy --needed git
-#     git clone <repo-url> && cd <repo-dir>
-#     ./install.sh
+#     git clone https://github.com/n0blinder/arch-hyprland.git
+#     cd arch-hyprland && ./install.sh
 #
-# The script sudo's for privileged steps itself. It is idempotent and
-# safe to re-run. A single reboot is offered at the end.
+# Idempotent and safe to re-run. Offers a reboot at the end.
 
 set -euo pipefail
 
@@ -60,11 +65,9 @@ OFFICIAL_PKGS=(
     ufw
     # login manager + tty colours
     greetd greetd-tuigreet kbd
-    # gpu: amd (primary) - libva-mesa-driver = VA-API hw video decode
+    # AMD iGPU userspace - REQUIRED for Hyprland to render (drives the panel)
     mesa vulkan-radeon vulkan-tools libva-mesa-driver
-    # gpu: nvidia (secondary / offload)
-    nvidia-open-dkms nvidia-utils nvidia-prime egl-wayland linux-headers dkms
-    # auto-cpufreq dependency
+    # auto-cpufreq dependency (CPU power mgmt; enabled below)
     python-typing_extensions
 )
 
@@ -136,8 +139,7 @@ cp "${REPO_DIR}"/wallpaper/* "${HOME}/Pictures/Wallpapers/" 2>/dev/null || \
 # 6. greetd + tty colours
 # ---------------------------------------------------------------------------
 # No custom launcher: greetd/tuigreet launches the distro's own Hyprland
-# wayland-session directly (tuigreet --remember-session picks it up). This
-# avoids a fragile wrapper in the login path.
+# wayland-session directly (tuigreet --remember-session picks it up).
 log "Installing greetd config and vtrgb service"
 
 # disable any pre-existing display manager (ignore if absent)
@@ -151,57 +153,7 @@ sudo install -Dm644 "${REPO_DIR}/vtrgb"         /etc/vtrgb
 sudo install -Dm644 "${REPO_DIR}/vtrgb.service" /etc/systemd/system/vtrgb.service
 
 # ---------------------------------------------------------------------------
-# 7. NVIDIA module options + early KMS load
-# ---------------------------------------------------------------------------
-log "Configuring NVIDIA modeset + RTD3 power management"
-sudo tee /etc/modprobe.d/nvidia.conf >/dev/null <<'EOF'
-options nvidia_drm modeset=1 fbdev=1
-options nvidia NVreg_DynamicPowerManagement=0x02
-EOF
-
-# RTD3 udev rules: set power/control=auto so the idle dGPU auto-suspends.
-# (nvidia-utils does not reliably ship these; set them explicitly.)
-sudo tee /etc/udev/rules.d/80-nvidia-pm.rules >/dev/null <<'EOF'
-ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
-ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
-ACTION=="remove", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
-ACTION=="remove", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"
-EOF
-
-if ! grep -q 'nvidia_drm' /etc/mkinitcpio.conf; then
-    sudo cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
-    sudo sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' \
-        /etc/mkinitcpio.conf
-fi
-
-# ---------------------------------------------------------------------------
-# 8. Hybrid GPU: report the AMD render node (do NOT force it)
-# ---------------------------------------------------------------------------
-# We do NOT set AQ_DRM_DEVICES automatically. Forcing it has caused
-# Backend::create() failures on some setups, and Hyprland auto-selects the
-# display GPU (AMD, which drives the internal panel) correctly on its own.
-# The dGPU is suspended by the RTD3 udev rule + NVreg_DynamicPowerManagement
-# (Section 7). Only if the dGPU refuses to suspend (because Hyprland opened
-# it) do you need to pin AMD as the sole render device - instructions below.
-log "Detecting AMD render node (for optional AMD-primary pinning)"
-amd_link=""
-for link in /dev/dri/by-path/*-card; do
-    [[ -e "${link}" ]] || continue
-    card="$(basename "$(readlink -f "${link}")")"          # e.g. card0
-    drv="$(basename "$(readlink -f "/sys/class/drm/${card}/device/driver" 2>/dev/null)")"
-    [[ "${drv}" == "amdgpu" ]] && amd_link="${link}"
-done
-if [[ -n "${amd_link}" ]]; then
-    echo "  amdgpu node: ${amd_link}"
-    echo "  If the dGPU stays active after boot, force AMD-primary with:"
-    echo "    echo 'AQ_DRM_DEVICES=${amd_link}' | sudo tee -a /etc/environment"
-    echo "    (then re-log). Verify the desktop still starts before relying on it."
-else
-    echo "  No amdgpu node found (normal in a VM)."
-fi
-
-# ---------------------------------------------------------------------------
-# 9. Services
+# 7. Services
 # ---------------------------------------------------------------------------
 log "Enabling services"
 sudo systemctl enable bluetooth.service
@@ -221,11 +173,6 @@ gsettings set com.github.stunkymonkey.nautilus-open-any-terminal terminal 'alacr
 # user service (also launched by autostart.lua; enabling is belt-and-suspenders)
 systemctl --user enable hyprpolkitagent.service 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# 10. Regenerate initramfs (picks up MODULES + modprobe.d) + reload
-# ---------------------------------------------------------------------------
-log "Regenerating initramfs"
-sudo mkinitcpio -P
 sudo systemctl daemon-reload
 
 # ---------------------------------------------------------------------------
@@ -234,22 +181,18 @@ sudo systemctl daemon-reload
 cat <<'EOF'
 
 ============================================================
- Setup complete.
+ Base desktop installed.
 
- After reboot the flow is:
-   greetd -> tuigreet (pick "Hyprland", remembered) -> Hyprland
+ After reboot: greetd -> tuigreet (pick "Hyprland", remembered) -> Hyprland
+ (Runs on the AMD iGPU. No NVIDIA driver yet - that's the next script.)
 
- Post-reboot verification:
-   cat /sys/module/nvidia_drm/parameters/modeset   # expect: Y
-   glxinfo -B | grep "OpenGL renderer"             # expect: AMD/Radeon
-   prime-run glxinfo -B | grep "OpenGL renderer"   # expect: NVIDIA
-   # idle dGPU should read "suspended":
-   #   lspci | grep -i nvidia   (get PCI addr, e.g. 01:00.0)
-   #   cat /sys/bus/pci/devices/0000:01:00.0/power/runtime_status
+ NEXT STEPS (from the repo dir):
+   ./gpu-driver-install.sh   # install the NVIDIA dGPU driver, then reboot
+   ./battery-optimize.sh     # suspend the idle dGPU for battery, then reboot
 ============================================================
 EOF
 
-read -rp "Reboot now? [y/N] " ans
+read -rp "Reboot into the desktop now? [y/N] " ans
 if [[ "${ans}" =~ ^[Yy]$ ]]; then
     sudo reboot
 else
