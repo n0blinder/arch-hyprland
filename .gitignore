@@ -7,3 +7,19 @@ rev-shell-firewall.txt
 
 # Backups of configs adjusted for this repo
 *.orig
+
+# Superseded backup files
+*.bak
+
+# Test / scratch artifacts (not part of the installer)
+hypr2/
+greetd/readme.txt
+greetd/vtrgb
+
+# Stray files inside the hypr config that must not ship
+# (install.sh also strips these from the deployed copy)
+.config/hypr/.bashrc
+.config/hypr/.zshrc
+
+# Debug screenshots dropped at the repo root (does not affect wallpaper/ or rofi images)
+/*.png
