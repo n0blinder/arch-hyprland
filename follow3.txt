@@ -41,8 +41,8 @@ WHAT CHANGED FROM follow2.txt (summary of fixes)
   exist) and added real modeset enablement (mkinitcpio MODULES).
 - HYBRID GPU (hardware-correct for Ryzen 7840HS/780M + RTX A500 Ampere):
   removed the wrong/unneeded xf86-video-ati + xf86-video-amdgpu; added
-  AMD iGPU video decode (libva-mesa-driver, mesa-vdpau); set AMD as the
-  primary render device (AQ_DRM_DEVICES via uwsm env); enabled NVIDIA
+  AMD iGPU video decode (libva-mesa-driver); set AMD as the primary
+  render device (AQ_DRM_DEVICES via ~/.config/hypr/gpu.env); enabled NVIDIA
   RTD3 runtime power-off (NVreg_DynamicPowerManagement=0x02) so the dGPU
   idles suspended; added nvidia-prime (prime-run) for on-demand offload.
   Dropped lib32-nvidia-utils + libva-nvidia-driver -> [multilib] not
@@ -132,9 +132,6 @@ SECTION 3 - Core Hyprland packages
 Official:
 
     hyprland
-    uwsm                          # Universal Wayland Session Manager
-                                  #   -> launches Hyprland as a managed
-                                  #      systemd session (see Section 17)
     xdg-desktop-portal-hyprland
     xdg-desktop-portal            # base portal (dependency of the above)
     xdg-utils                     # xdg-open: file/URL associations
@@ -145,10 +142,14 @@ Official:
     hypridle                      # idle daemon (used by autostart.lua)
     hyprlock                      # screen locker (used by hypridle/ashell)
 
+(No uwsm: Hyprland is launched directly by greetd/tuigreet. autostart.lua
+already imports the environment into systemd/D-Bus and starts the user
+services, so uwsm adds nothing here and was dropped for reliability.)
+
 Command:
 
     sudo pacman -S --needed --noconfirm \
-        hyprland uwsm xdg-desktop-portal-hyprland xdg-desktop-portal \
+        hyprland xdg-desktop-portal-hyprland xdg-desktop-portal \
         xdg-utils qt5-wayland qt6-wayland \
         hyprpolkitagent hyprpaper hypridle hyprlock
 
@@ -480,17 +481,19 @@ suspended until you explicitly offload work to it.
         done
         # note which cardN shows "amdgpu"
 
-    Set it in the uwsm session environment so it is exported BEFORE the
-    compositor starts:
+    Set it so it is exported BEFORE the compositor starts. The launcher
+    /usr/local/bin/start-hyprland-session sources ~/.config/hypr/gpu.env,
+    so the install script writes the export there (stable by-path names):
 
-        mkdir -p ~/.config/uwsm
+        mkdir -p ~/.config/hypr
         # example if amdgpu is card1 and nvidia is card0:
-        echo 'export AQ_DRM_DEVICES=/dev/dri/card1:/dev/dri/card0' \
-            >> ~/.config/uwsm/env
+        echo 'export AQ_DRM_DEVICES=/dev/dri/by-path/pci-...-card' \
+            > ~/.config/hypr/gpu.env
 
-    (The install script writes this line using the auto-detected node.
-    Using the wrong node can cause a black screen at login, so the
-    script verifies the amdgpu node exists before writing it.)
+    (The install script writes this using the auto-detected amdgpu node.
+    Using the wrong node can cause a black screen at login, so the script
+    only writes a real node when amdgpu is found; otherwise it writes an
+    empty gpu.env - e.g. in a VM with no amdgpu.)
 
 (2) dGPU power-off is otherwise automatic.
     nvidia-utils ships udev rules that enable RTD3 runtime PM for Turing+
@@ -578,54 +581,38 @@ If you swap the image, update the path in
 
 
 =========================================================
-SECTION 17 - Session launcher script  (/usr/local/bin) + uwsm
+SECTION 17 - Session launcher script  (/usr/local/bin)
 =========================================================
 
-greetd's config.toml launches a command that MUST exist in PATH.
-We standardize on the name "start-hyprland-session" and launch Hyprland
-THROUGH uwsm so it runs as a managed systemd session.
+greetd's config.toml launches a command that MUST exist in PATH. We
+standardize on "start-hyprland-session", which starts Hyprland DIRECTLY
+(no uwsm - see Section 3 for why it is not needed here).
 
-Background on uwsm launch mechanics:
-    Hyprland ships two session files in /usr/share/wayland-sessions/:
-        hyprland.desktop        -> Exec=Hyprland        (plain compositor)
-        hyprland-uwsm.desktop   -> Exec=uwsm start ...   (uwsm wrapper)
-    To start via uwsm we run "uwsm start hyprland.desktop" (the PLAIN
-    session file). Do NOT feed hyprland-uwsm.desktop to "uwsm start" or
-    you would wrap uwsm inside uwsm.
-
-Install the launcher (uwsm version):
+Install the launcher:
 
     sudo cp start-hyprland-session /usr/local/bin/start-hyprland-session
     sudo chmod +x /usr/local/bin/start-hyprland-session
 
-Required contents of the launcher (UPDATE the shipped file to this):
+Contents of the launcher:
 
     #!/bin/sh
-    exec uwsm start -- hyprland.desktop
+    # Source the GPU env (AMD as primary render device) then start Hyprland.
+    [ -r "$HOME/.config/hypr/gpu.env" ] && . "$HOME/.config/hypr/gpu.env"
+    exec Hyprland
 
-IMPORTANT: do NOT wrap this in `uwsm check may-start`. That check is only
-for shell-profile / TTY-autologin (it verifies the parent is a login
-shell and tty1 is foreground). In a display-manager context (greetd/
-tuigreet --cmd) it FAILS, so the launcher exits without starting a
-session and greetd simply reloads the greeter. Display managers must
-call `uwsm start` directly.
+    -> gpu.env is written by the install script (Section 14) and exports
+       AQ_DRM_DEVICES so the AMD iGPU is the primary render device.
 
-VERIFY the available session id on the target machine:
-
-    uwsm check                      # sanity check
-    ls /usr/share/wayland-sessions/ # confirm hyprland.desktop exists
-
-IMPORTANT NAME RECONCILIATION:
-The shipped greetd/config.toml active line currently calls
-"--cmd start-hyprland". Update it to point at this launcher's full path:
+NAME RECONCILIATION:
+The shipped greetd/config.toml active line must point at this launcher:
     --cmd /usr/local/bin/start-hyprland-session
 so greetd (Section 18) and this script agree on the name.
 
-NOTE: with uwsm managing the session, the
-"dbus-update-activation-environment" line in autostart.lua is redundant
-(uwsm imports the environment into systemd/D-Bus itself). It is harmless
-to leave in place. Persistent env vars can also be set in
-~/.config/uwsm/env if you prefer them over environment.lua.
+NOTE: because we launch Hyprland directly (no uwsm), the
+"dbus-update-activation-environment --systemd ..." line in autostart.lua
+is REQUIRED - it imports WAYLAND_DISPLAY/XDG_CURRENT_DESKTOP/etc. into the
+systemd + D-Bus user session so user services (hyprpolkitagent, portals)
+work. Do not remove it.
 
 
 =========================================================
@@ -747,8 +734,7 @@ SECTION 22 - Reboot into the desktop
 
 Expected boot flow:
 
-    greetd -> tuigreet -> start-hyprland-session
-        -> uwsm start hyprland.desktop -> Hyprland (managed session)
+    greetd -> tuigreet -> start-hyprland-session -> Hyprland
         -> autostart.lua brings up:
              hyprpaper (wallpaper)
              hypridle (idle/lock)
@@ -766,7 +752,6 @@ OFFICIAL (pacman):
     base-devel
     git
     hyprland
-    uwsm
     xdg-desktop-portal-hyprland
     xdg-desktop-portal
     xdg-utils
@@ -847,24 +832,22 @@ AUR (yay):
 SECTION 24 - Open items / verify before shipping the script
 =========================================================
 
-1. Wallpaper image must be added to repo (wallpapers/) - user-supplied.
-2. Confirm the Hyprland Lua-config entry point for the installed Hyprland
-   version (hyprland.lua vs hyprland.conf) - the config uses the new
-   Lua API. Test on target before trusting unattended.
+1. Wallpaper: shipped in wallpaper/ (wallhaven-7p8zg3.png); hyprpaper.conf
+   points at it. Swap the image + path if desired.
+2. Hyprland Lua config: since 0.55, if ~/.config/hypr/hyprland.lua exists
+   it takes precedence over hyprland.conf (silently). Confirmed working;
+   the config loads on the installed Hyprland.
 3. [multilib] is NOT required (no lib32 packages). Leave it disabled.
-   AQ_DRM_DEVICES: the install script must auto-detect the amdgpu card
-   node and verify it exists before writing ~/.config/uwsm/env - a wrong
-   node can black-screen the login. Confirm on the target with the
-   /sys/class/drm loop in Section 14.
+   AQ_DRM_DEVICES: the install script auto-detects the amdgpu card node
+   (stable by-path name) and writes ~/.config/hypr/gpu.env, which the
+   launcher sources. A wrong node can black-screen the login, so the
+   script only writes a real node when amdgpu is found (empty on VMs).
 4. Username templating: verify no other shipped config hardcodes "tony".
 5. brave-bin / mullvad-vpn-bin vs source builds - pick per preference.
-6. uwsm: confirm "uwsm check" passes and that
-   /usr/share/wayland-sessions/hyprland.desktop exists on the target, so
-   "uwsm start hyprland.desktop" resolves (Section 17). The shipped
-   start-hyprland-session file (currently "exec Hyprland") must be
-   updated to the uwsm launcher, and greetd/config.toml's --cmd updated
-   to /usr/local/bin/start-hyprland-session - the install script will
-   handle both.
+6. Launch model: Hyprland is started DIRECTLY by greetd/tuigreet via
+   /usr/local/bin/start-hyprland-session (no uwsm). SUPER+M runs
+   "hyprctl dispatch exit" (logout). autostart.lua's
+   dbus-update-activation-environment line is REQUIRED for user services.
 
 =========================================================
 END

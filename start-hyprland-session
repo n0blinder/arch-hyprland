@@ -1,12 +1,9 @@
 #!/bin/sh
 # Installed to /usr/local/bin/start-hyprland-session
-# Launched by greetd/tuigreet. Starts Hyprland as a managed uwsm session
-# so user services and graphical-session.target behave correctly.
-#
-# NOTE: `uwsm check may-start` is intentionally NOT used here. It is only
-# meant for shell-profile / TTY-autologin (it checks "parent is a login
-# shell" and "tty1 in foreground"), and it FAILS in a display-manager
-# context -- which makes greetd simply reload the greeter instead of
-# starting a session. Display managers must call `uwsm start` directly.
+# Launched by greetd/tuigreet. Sources the GPU env written by install.sh
+# (sets the AMD iGPU as the primary render device via AQ_DRM_DEVICES),
+# then starts Hyprland directly. No uwsm: autostart.lua already imports the
+# environment into systemd/D-Bus and starts the user services.
 
-exec uwsm start -- hyprland.desktop
+[ -r "$HOME/.config/hypr/gpu.env" ] && . "$HOME/.config/hypr/gpu.env"
+exec Hyprland

@@ -49,19 +49,19 @@ It offers a single reboot at the end.
 - Deploys app configs to `~/.config`: **hypr** (Hyprland, Lua config), ashell,
   rofi, mako, alacritty.
 - Installs GPU drivers:
-  - **AMD (primary):** mesa, vulkan-radeon, VA-API/VDPAU video decode.
+  - **AMD (primary):** mesa, vulkan-radeon, VA-API video decode.
   - **NVIDIA (secondary):** `nvidia-open` (Ampere), modeset + RTD3 runtime
     power-off so the dGPU idles **suspended**; `prime-run` for on-demand use.
   - AMD is set as the primary render device (`AQ_DRM_DEVICES`, auto-detected).
-- Sets up the login stack: **greetd + tuigreet**, launching Hyprland through
-  **uwsm** as a managed systemd session; custom TTY colours via `vtrgb`.
+- Sets up the login stack: **greetd + tuigreet**, launching Hyprland directly
+  via `/usr/local/bin/start-hyprland-session`; custom TTY colours via `vtrgb`.
 - Enables services: bluetooth, auto-cpufreq (CPU power), ufw (deny incoming),
   hyprpolkitagent (user).
 
 ## Boot flow
 
 ```
-greetd → tuigreet → uwsm start hyprland.desktop → Hyprland
+greetd → tuigreet → start-hyprland-session → Hyprland
     → hyprpaper · hypridle · hyprpolkitagent · ashell · cliphist
 ```
 

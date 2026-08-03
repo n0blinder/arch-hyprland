@@ -38,7 +38,7 @@ OFFICIAL_PKGS=(
     # build tools
     base-devel git
     # hyprland core + session
-    hyprland uwsm xdg-desktop-portal-hyprland xdg-desktop-portal xdg-utils
+    hyprland xdg-desktop-portal-hyprland xdg-desktop-portal xdg-utils
     qt5-wayland qt6-wayland hyprpolkitagent hyprpaper hypridle hyprlock
     # wayland utilities
     wl-clipboard cliphist grim slurp
@@ -133,7 +133,7 @@ cp "${REPO_DIR}"/wallpaper/* "${HOME}/Pictures/Wallpapers/" 2>/dev/null || \
     echo "  (no image found in ${REPO_DIR}/wallpaper/ - skipping)"
 
 # ---------------------------------------------------------------------------
-# 6. Session launcher (uwsm) + greetd + tty colours
+# 6. Session launcher + greetd + tty colours
 # ---------------------------------------------------------------------------
 log "Installing session launcher, greetd config and vtrgb service"
 sudo install -Dm755 "${REPO_DIR}/start-hyprland-session" /usr/local/bin/start-hyprland-session
@@ -179,14 +179,16 @@ for link in /dev/dri/by-path/*-card; do
         others="${others:+${others}:}${link}"
     fi
 done
-mkdir -p "${HOME}/.config/uwsm"
+mkdir -p "${HOME}/.config/hypr"
+# start-hyprland-session sources ~/.config/hypr/gpu.env before launching Hyprland.
 if [[ -n "${amd_link}" ]]; then
     # by-path names are stable across boots (card numbering is not).
-    echo "export AQ_DRM_DEVICES=${amd_link}${others:+:${others}}" > "${HOME}/.config/uwsm/env"
+    echo "export AQ_DRM_DEVICES=${amd_link}${others:+:${others}}" > "${HOME}/.config/hypr/gpu.env"
     echo "  AQ_DRM_DEVICES=${amd_link}${others:+:${others}}"
 else
-    echo "  WARNING: amdgpu DRM node not found; NOT writing AQ_DRM_DEVICES." >&2
-    echo "  Set it manually in ~/.config/uwsm/env after checking /sys/class/drm." >&2
+    : > "${HOME}/.config/hypr/gpu.env"
+    echo "  WARNING: amdgpu DRM node not found; wrote an empty ~/.config/hypr/gpu.env." >&2
+    echo "  Set AQ_DRM_DEVICES there manually after checking /sys/class/drm (VMs have no amdgpu)." >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -226,7 +228,7 @@ cat <<'EOF'
  Setup complete.
 
  After reboot the flow is:
-   greetd -> tuigreet -> uwsm start hyprland.desktop -> Hyprland
+   greetd -> tuigreet -> start-hyprland-session -> Hyprland
 
  Post-reboot verification:
    cat /sys/module/nvidia_drm/parameters/modeset   # expect: Y
